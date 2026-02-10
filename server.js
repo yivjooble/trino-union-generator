@@ -43,8 +43,18 @@ try {
 
 // Trino client factory
 function createTrinoClient() {
+  // trino-client expects: "host:port" format WITHOUT http:// prefix
+  const host = config.trino.host;
+  const port = config.trino.port;
+  
+  // Combine host and port properly
+  let server = host;
+  if (!host.includes(':') && port) {
+    server = `${host}:${port}`;
+  }
+  
   const trinoConfig = {
-    server: `${config.trino.host}:${config.trino.port}`,
+    server: server,
     catalog: process.env.TRINO_CATALOG || config.trino.catalog,
     schema: '',
   };
