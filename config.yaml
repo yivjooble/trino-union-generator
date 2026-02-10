@@ -1,0 +1,26 @@
+# Trino Connection Configuration
+trino:
+  host: "localhost"
+  port: 8080
+  user: "trino"
+  password: ""
+  catalog: ""
+
+# Application Configuration
+app:
+  host: "0.0.0.0"
+  port: 3000
+
+# Table Naming Patterns
+patterns:
+  # Country code will be substituted in table names
+  country_pattern: "dte_profile_storage_{country}.dbo.\"{table}\""
+  # Enable country code substitution
+  use_country_code: true
+  # Default countries to use if not specified
+  default_countries:
+    - "de"
+    - "fr"
+    - "es"
+    - "it"
+    - "uk"
