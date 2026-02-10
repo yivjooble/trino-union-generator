@@ -75,9 +75,8 @@ async function executeQuery(query) {
     return results;
   } catch (error) {
     throw error;
-  } finally {
-    client.close();
   }
+  // Note: Client manages connection pool automatically, no close() needed
 }
 
 // API Endpoints
