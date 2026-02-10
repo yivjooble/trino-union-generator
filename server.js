@@ -3,7 +3,7 @@ const cors = require('cors');
 const yaml = require('js-yaml');
 const fs = require('fs');
 const path = require('path');
-const { Trino } = require('trino-client');
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -41,52 +41,57 @@ try {
   };
 }
 
-// Trino client factory
-function createTrinoClient() {
-  // trino-client expects: "host:port" format WITHOUT http:// prefix
-  const host = config.trino.host;
-  const port = config.trino.port;
+// Trino REST API helper
+async function executeTrinoQuery(query) {
+  const baseUrl = `http://${config.trino.host}:${config.trino.port}`;
+  const user = process.env.TRINO_USER || config.trino.user || 'trino';
   
-  // Combine host and port properly
-  let server = host;
-  if (!host.includes(':') && port) {
-    server = `${host}:${port}`;
-  }
-  
-  const trinoConfig = {
-    server: server,
-    catalog: process.env.TRINO_CATALOG || config.trino.catalog,
-    schema: '',
-  };
-  
-  if (config.trino.user) {
-    trinoConfig.auth = {
-      username: process.env.TRINO_USER || config.trino.user,
-      password: process.env.TRINO_PASSWORD || config.trino.password || undefined
-    };
-  }
-  
-  return Trino.create(trinoConfig);
-}
-
-// Helper function to execute Trino queries
-async function executeQuery(query) {
-  const client = createTrinoClient();
   try {
-    const iterator = await client.query(query);
+    // Initial request
+    const response = await axios.post(
+      `${baseUrl}/v1/statement`,
+      query,
+      {
+        headers: {
+          'X-Trino-User': user,
+          'X-Trino-Catalog': process.env.TRINO_CATALOG || config.trino.catalog || '',
+          'X-Trino-Schema': '',
+          'Content-Type': 'text/plain'
+        },
+        maxRedirects: 0,
+        validateStatus: status => status < 500
+      }
+    );
+    
     const results = [];
     
-    for await (const row of iterator) {
-      if (row.data) {
-        results.push(...row.data);
+    // Handle response
+    if (response.data && response.data.data) {
+      for (const row of response.data.data) {
+        results.push(row);
       }
+    }
+    
+    // If there's a nextUri, follow it (for large queries)
+    let currentUri = response.data.nextUri;
+    while (currentUri) {
+      const nextResponse = await axios.get(currentUri, {
+        headers: { 'X-Trino-User': user }
+      });
+      
+      if (nextResponse.data && nextResponse.data.data) {
+        for (const row of nextResponse.data.data) {
+          results.push(row);
+        }
+      }
+      currentUri = nextResponse.data.nextUri;
     }
     
     return results;
   } catch (error) {
+    console.error('Trino query error:', error.message);
     throw error;
   }
-  // Note: Client manages connection pool automatically, no close() needed
 }
 
 // API Endpoints
@@ -95,7 +100,7 @@ async function executeQuery(query) {
 app.get('/api/catalogs', async (req, res) => {
   try {
     const query = "SHOW CATALOGS";
-    const rows = await executeQuery(query);
+    const rows = await executeTrinoQuery(query);
     const catalogs = rows.map(row => row[0]);
     
     // If country pattern is enabled, add catalog names as countries
@@ -126,7 +131,7 @@ app.get('/api/catalogs/:catalog/schemas', async (req, res) => {
   
   try {
     const query = `SHOW SCHEMAS FROM ${catalog}`;
-    const rows = await executeQuery(query);
+    const rows = await executeTrinoQuery(query);
     const schemas = rows.map(row => row[0]);
     
     res.json({
@@ -158,7 +163,7 @@ app.get('/api/catalogs/:catalog/schemas/:schema/tables', async (req, res) => {
       query = `SHOW TABLES FROM ${catalog}.${schema} LIKE '${pattern.replace('dbo."{table}"', '%')}'`;
     }
     
-    const rows = await executeQuery(query);
+    const rows = await executeTrinoQuery(query);
     const tables = rows.map(row => row[0]);
     
     res.json({
@@ -192,7 +197,7 @@ app.get('/api/catalogs/:catalog/schemas/:schema/columns/:table', async (req, res
     }
     
     const query = `DESCRIBE ${catalog}.${schema}.${tableName}`;
-    const rows = await executeQuery(query);
+    const rows = await executeTrinoQuery(query);
     const columns = rows.map(row => ({
       name: row[0],
       type: row[1],
